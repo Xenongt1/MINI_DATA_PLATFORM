@@ -32,7 +32,7 @@ def task_fail_slack_alert(context):
     
     failed_alert = SlackWebhookOperator(
         task_id='slack_test',
-        http_conn_id=SLACK_CONN_ID,
+        slack_webhook_conn_id=SLACK_CONN_ID,
         message=slack_msg,
         username='Airflow-Alert'
     )
@@ -70,7 +70,7 @@ def get_s3_client():
         region_name='us-east-1'
     )
 
-def scan_minio_for_new_files(**kwargs):
+def scan_minio_for_new_files(ti, **kwargs):
     """Task 1: Scans MinIO for CSV files and compares with a tracking mechanism"""
     s3_client = get_s3_client()
     
@@ -90,8 +90,8 @@ def scan_minio_for_new_files(**kwargs):
         logging.info(f"Identified {len(all_files)} total files in MinIO.")
         
         # Explicitly push file list for visibility in XComs
-        kwargs['ti'].xcom_push(key='file_count', value=len(all_files))
-        kwargs['ti'].xcom_push(key='file_list', value=all_files)
+        ti.xcom_push(key='file_count', value=len(all_files))
+        ti.xcom_push(key='file_list', value=all_files)
         
         return all_files
         
@@ -176,9 +176,9 @@ def clean_data(ti, **kwargs):
         logging.info(f"✅ Finished cleaning {filename}. Removed {initial_rows - final_rows} bad/duplicate rows. Clean rows: {final_rows}")
         
         # Push metrics to XCom for monitoring
-        kwargs['ti'].xcom_push(key=f'{filename}_initial_rows', value=initial_rows)
-        kwargs['ti'].xcom_push(key=f'{filename}_clean_rows', value=final_rows)
-        kwargs['ti'].xcom_push(key=f'{filename}_dropped_rows', value=initial_rows - final_rows)
+        ti.xcom_push(key=f'{filename}_initial_rows', value=initial_rows)
+        ti.xcom_push(key=f'{filename}_clean_rows', value=final_rows)
+        ti.xcom_push(key=f'{filename}_dropped_rows', value=initial_rows - final_rows)
 
         # Save a local cache of the processed file
         processed_filepath = os.path.join(PROCESSED_DIR, f"clean_{filename}")
@@ -272,7 +272,7 @@ def load_to_postgres(ti, **kwargs):
             total_inserted += inserted_count
             logging.info(f"✅ Upserted {len(records)} records from {file_info['filename']} ({inserted_count} new rows inserted).")
             # Push specific file metrics
-            kwargs['ti'].xcom_push(key=f"{file_info['filename']}_inserted", value=inserted_count)
+            ti.xcom_push(key=f"{file_info['filename']}_inserted", value=inserted_count)
             
         except Exception as e:
             logging.error(f"Database insertion failed for {file_info['filename']}: {e}")
@@ -285,7 +285,7 @@ def load_to_postgres(ti, **kwargs):
                 conn.close()
 
     logging.info(f"🎉 Pipeline finished. Total new rows successfully inserted across all files: {total_inserted}")
-    kwargs['ti'].xcom_push(key='total_upserted_rows', value=total_inserted)
+    ti.xcom_push(key='total_upserted_rows', value=total_inserted)
 
 # Define the DAG
 with DAG(
