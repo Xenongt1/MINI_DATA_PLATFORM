@@ -11,6 +11,7 @@ import logging
 
 # Slack Webhook Connection ID (stored in Airflow UI)
 SLACK_CONN_ID = 'slack_webhook'
+SLACK_WEBHOOK_URL = os.getenv('SLACK_WEBHOOK_URL')
 
 def task_fail_slack_alert(context):
     """
@@ -30,13 +31,24 @@ def task_fail_slack_alert(context):
     *Log URL*: {log_url}
     """
     
-    failed_alert = SlackWebhookOperator(
-        task_id='slack_test',
-        slack_webhook_conn_id=SLACK_CONN_ID,
-        message=slack_msg,
-        username='Airflow-Alert'
-    )
-    return failed_alert.execute(context=context)
+    # Try Connection ID first, fallback to Environment Variable
+    try:
+        failed_alert = SlackWebhookOperator(
+            task_id='slack_test',
+            slack_webhook_conn_id=SLACK_CONN_ID,
+            message=slack_msg,
+            username='Airflow-Alert'
+        )
+        return failed_alert.execute(context=context)
+    except Exception as e:
+        logging.warning(f"Could not use Slack connection '{SLACK_CONN_ID}': {e}. Trying Environment Variable.")
+        if SLACK_WEBHOOK_URL:
+            from airflow.providers.slack.hooks.slack_webhook import SlackWebhookHook
+            slack_hook = SlackWebhookHook(webhook_url=SLACK_WEBHOOK_URL)
+            slack_hook.send(text=slack_msg)
+            logging.info("Slack notification sent via Environment Variable.")
+        else:
+            logging.error("No Slack Webhook URL found in environment variables.")
 
 # Configuration for connections
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'http://minio:9000') # Use docker service name
