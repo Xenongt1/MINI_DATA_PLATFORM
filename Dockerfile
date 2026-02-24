@@ -15,4 +15,5 @@ RUN pip install --no-cache-dir \
     boto3==1.34.0 \
     minio==7.2.3 \
     pandas==2.1.4 \
-    psycopg2-binary==2.9.9
+    psycopg2-binary==2.9.9 \
+    apache-airflow-providers-slack==8.5.1

@@ -1,12 +1,42 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
+from airflow.providers.slack.operators.slack_webhook import SlackWebhookOperator
 from datetime import datetime, timedelta
 import boto3
 import pandas as pd
 import io
 import os
 import logging
+
+# Slack Webhook Connection ID (stored in Airflow UI)
+SLACK_CONN_ID = 'slack_webhook'
+
+def task_fail_slack_alert(context):
+    """
+    Callback function that sends a Slack notification when a task fails.
+    """
+    ti = context.get('task_instance')
+    dag_id = ti.dag_id
+    task_id = ti.task_id
+    execution_date = context.get('execution_date')
+    log_url = ti.log_url
+
+    slack_msg = f"""
+    :red_circle: Task Failed.
+    *Dag*: {dag_id}
+    *Task*: {task_id}
+    *Execution Time*: {execution_date}
+    *Log URL*: {log_url}
+    """
+    
+    failed_alert = SlackWebhookOperator(
+        task_id='slack_test',
+        http_conn_id=SLACK_CONN_ID,
+        message=slack_msg,
+        username='Airflow-Alert'
+    )
+    return failed_alert.execute(context=context)
 
 # Configuration for connections
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'http://minio:9000') # Use docker service name
@@ -27,6 +57,8 @@ default_args = {
     'email_on_retry': False,
     'retries': 3,
     'retry_delay': timedelta(minutes=5),
+    'retry_exponential_backoff': True,
+    'on_failure_callback': task_fail_slack_alert,
 }
 
 def get_s3_client():
@@ -56,6 +88,11 @@ def scan_minio_for_new_files(**kwargs):
         # In a production environment, you'd maintain a state table of processed files.
         
         logging.info(f"Identified {len(all_files)} total files in MinIO.")
+        
+        # Explicitly push file list for visibility in XComs
+        kwargs['ti'].xcom_push(key='file_count', value=len(all_files))
+        kwargs['ti'].xcom_push(key='file_list', value=all_files)
+        
         return all_files
         
     except Exception as e:
@@ -138,6 +175,11 @@ def clean_data(ti, **kwargs):
         final_rows = len(df)
         logging.info(f"✅ Finished cleaning {filename}. Removed {initial_rows - final_rows} bad/duplicate rows. Clean rows: {final_rows}")
         
+        # Push metrics to XCom for monitoring
+        kwargs['ti'].xcom_push(key=f'{filename}_initial_rows', value=initial_rows)
+        kwargs['ti'].xcom_push(key=f'{filename}_clean_rows', value=final_rows)
+        kwargs['ti'].xcom_push(key=f'{filename}_dropped_rows', value=initial_rows - final_rows)
+
         # Save a local cache of the processed file
         processed_filepath = os.path.join(PROCESSED_DIR, f"clean_{filename}")
         df.to_csv(processed_filepath, index=False)
@@ -229,6 +271,8 @@ def load_to_postgres(ti, **kwargs):
             inserted_count = cursor.rowcount
             total_inserted += inserted_count
             logging.info(f"✅ Upserted {len(records)} records from {file_info['filename']} ({inserted_count} new rows inserted).")
+            # Push specific file metrics
+            kwargs['ti'].xcom_push(key=f"{file_info['filename']}_inserted", value=inserted_count)
             
         except Exception as e:
             logging.error(f"Database insertion failed for {file_info['filename']}: {e}")
@@ -241,13 +285,14 @@ def load_to_postgres(ti, **kwargs):
                 conn.close()
 
     logging.info(f"🎉 Pipeline finished. Total new rows successfully inserted across all files: {total_inserted}")
+    kwargs['ti'].xcom_push(key='total_upserted_rows', value=total_inserted)
 
 # Define the DAG
 with DAG(
     'sales_data_pipeline',
     default_args=default_args,
     description='ETL pipeline taking sales CSVs from MinIO, cleaning them, and loading to PostgreSQL',
-    schedule_interval=timedelta(hours=1), # Run hourly, but can be triggered manually
+    schedule_interval='@daily', 
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=['sales', 'etl', 'minio', 'postgres'],
