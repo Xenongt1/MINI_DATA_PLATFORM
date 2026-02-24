@@ -27,7 +27,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d
     ports:
-      - "5435:5432"
+      - "5432:5432"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s

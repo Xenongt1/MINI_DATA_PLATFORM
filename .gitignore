@@ -1,0 +1,24 @@
+# Airflow
+airflow/logs/
+airflow/dags/__pycache__/
+*.log
+
+# Data
+data/raw/*.csv
+data/processed/*.csv
+
+# Docker
+.env
+volumes/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+
+# OS
+.DS_Store
+Thumbs.db
