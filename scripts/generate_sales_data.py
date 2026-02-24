@@ -53,7 +53,13 @@ SALESPERSONS = [
 STORE_LOCATIONS = ["New York", "San Francisco", "London", "Tokyo", "Berlin", "Toronto", "Sydney"]
 
 def get_s3_client():
-    """Initializes and returns a boto3 client configured for MinIO."""
+    """
+    Initializes and returns a boto3 client configured for the local MinIO instance.
+    Utilizes environment variables for precise configuration.
+    
+    Returns:
+        botocore.client.S3: A configured S3 client object.
+    """
     return boto3.client(
         's3',
         endpoint_url=MINIO_ENDPOINT,
@@ -63,7 +69,14 @@ def get_s3_client():
     )
 
 def ensure_bucket_exists(s3_client, bucket_name):
-    """Ensures that the target bucket exists in MinIO."""
+    """
+    Ensures that the target bucket exists in the MinIO storage.
+    If it does not exist, it creates it automatically.
+    
+    Args:
+        s3_client (botocore.client.S3): The active S3 client.
+        bucket_name (str): The name of the bucket to verify/create.
+    """
     try:
         s3_client.head_bucket(Bucket=bucket_name)
     except ClientError as e:
@@ -74,13 +87,46 @@ def ensure_bucket_exists(s3_client, bucket_name):
             raise
 
 def generate_sale(base_date=None):
-    """Creates one sale record with random values."""
+    """
+    Creates one single simulated sale record with random choices from master data.
+    Intentionally injects 'dirty' data formats (nulls, string counts, duplicates) 
+    roughly 10% of the time to simulate messy real-world reporting that requires cleaning.
+    
+    Args:
+        base_date (datetime, optional): The anchor date for the sale. Defaults to datetime.now().
+        
+    Returns:
+        list: A single row representing the transaction record.
+    """
     product = random.choice(PRODUCTS)
     customer = random.choice(CUSTOMERS)
     salesperson = random.choice(SALESPERSONS)
     
     quantity = random.randint(1, 5)
     total_amount = round(product["price"] * quantity, 2)
+    
+    # 10% chance to mess up the data format for data cleaning exercises
+    is_dirty = random.random() < 0.10
+    
+    if is_dirty:
+        dirty_type = random.choice(['null_name', 'string_qty', 'missing_location', 'negative_price'])
+        if dirty_type == 'null_name':
+            customer_name = ""  # Missing value
+            store_location = random.choice(STORE_LOCATIONS)
+        elif dirty_type == 'string_qty':
+            quantity = str(quantity) + " units"  # String instead of int
+            customer_name = customer["name"]
+            store_location = random.choice(STORE_LOCATIONS)
+        elif dirty_type == 'missing_location':
+            store_location = None # Missing value
+            customer_name = customer["name"]
+        elif dirty_type == 'negative_price':
+            total_amount = -total_amount  # Negative amount anomaly
+            customer_name = customer["name"]
+            store_location = random.choice(STORE_LOCATIONS)
+    else:
+        customer_name = customer["name"]
+        store_location = random.choice(STORE_LOCATIONS)
     
     if not base_date:
         base_date = datetime.now()
@@ -96,25 +142,54 @@ def generate_sale(base_date=None):
         str(uuid.uuid4()),                    # transaction_id
         tx_time.isoformat(),                  # transaction_date
         customer["cust_id"],                  # customer_id
-        customer["name"],                     # customer_name
+        customer_name,                        # customer_name (sometimes empty)
         salesperson["emp_id"],                # salesperson_id
         salesperson["name"],                  # salesperson_name
         product["product_id"],                # product_id
         product["name"],                      # product_name
         product["category"],                  # category
-        quantity,                             # quantity
+        quantity,                             # quantity (sometimes string)
         product["price"],                     # unit_price
-        total_amount,                         # total_amount
-        random.choice(STORE_LOCATIONS)        # store_location
+        total_amount,                         # total_amount (sometimes negative)
+        store_location                        # store_location (sometimes empty)
     ]
 
 def generate_month(num_records=200):
-    """Generates sales spread across a month."""
+    """
+    Generates a bulk collection of sales spread out roughly across a single month.
+    Also has a 5% chance to duplicate an exact row to test duplication cleaning.
+    
+    Args:
+        num_records (int, optional): The target number of entries to generate. Defaults to 200.
+        
+    Returns:
+        list of list: A list where each item is a transaction record array.
+    """
     base_date = datetime.now()
-    return [generate_sale(base_date) for _ in range(num_records)]
+    records = []
+    
+    for _ in range(num_records):
+        record = generate_sale(base_date)
+        records.append(record)
+        
+        # 5% chance to inject an exact identical duplicate row
+        if random.random() < 0.05:
+            records.append(record)
+            
+    return records
 
 def save_csv(records, filename_prefix="sales_data"):
-    """Writes the records to a CSV file in data/raw/."""
+    """
+    Takes raw list records and writes them out safely to a physical CSV file inside
+    the local data/raw/ directory with a unique standard timestamp.
+    
+    Args:
+        records (list of list): The generated transaction rows.
+        filename_prefix (str, optional): The string prefix for the filename. Defaults to "sales_data".
+        
+    Returns:
+        tuple: (filepath string, filename string) to track the final destination.
+    """
     timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f"{filename_prefix}_{timestamp_str}.csv"
     filepath = os.path.join(RAW_DATA_DIR, filename)
@@ -134,7 +209,16 @@ def save_csv(records, filename_prefix="sales_data"):
     return filepath, filename
 
 def upload_to_minio(s3_client, bucket_name, filepath, file_name):
-    """Pushes the CSV file to our MinIO bucket."""
+    """
+    Securely pushes the physical CSV file from the local file system
+    straight into the target 'raw' object storage bucket on MinIO.
+    
+    Args:
+        s3_client (botocore.client.S3): The active S3 connection client.
+        bucket_name (str): The destination bucket string name.
+        filepath (str): The absolute local filepath to the source file.
+        file_name (str): The desired destination key/name within the bucket.
+    """
     try:
         logging.info(f"Uploading {file_name} to MinIO bucket '{bucket_name}'...")
         s3_client.upload_file(filepath, bucket_name, file_name)
@@ -144,6 +228,11 @@ def upload_to_minio(s3_client, bucket_name, filepath, file_name):
         raise
 
 def main():
+    """
+    Main orchestration function for the generator simulation.
+    Ensures bucket availability, generates roughly a month's worth of messy 
+    sales, saves it physically as a CSV, and then executes the upload command.
+    """
     logging.info("Starting Data Generation Simulator")
     
     try:
