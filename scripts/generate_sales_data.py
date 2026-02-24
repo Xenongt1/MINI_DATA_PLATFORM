@@ -3,14 +3,18 @@ import random
 import uuid
 import os
 import time
+import logging
 from datetime import datetime, timedelta
+
+# Configure standard logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 try:
     import boto3
     from botocore.exceptions import ClientError
 except ImportError:
-    print("Error: The 'boto3' library is not installed.")
-    print("Please install it by running: pip install boto3")
+    logging.error("The 'boto3' library is not installed.")
+    logging.info("Please install it by running: pip install boto3")
     exit(1)
 
 # Configuration
@@ -65,6 +69,7 @@ def ensure_bucket_exists(s3_client, bucket_name):
     except ClientError as e:
         if e.response['Error']['Code'] == '404':
             s3_client.create_bucket(Bucket=bucket_name)
+            logging.info(f"Bucket '{bucket_name}' created successfully.")
         else:
             raise
 
@@ -125,23 +130,21 @@ def save_csv(records, filename_prefix="sales_data"):
         writer.writerow(headers)
         writer.writerows(records)
         
-    print(f"📁 Saved {len(records)} records to {filepath}")
+    logging.info(f"Saved {len(records)} records to {filepath}")
     return filepath, filename
 
 def upload_to_minio(s3_client, bucket_name, filepath, file_name):
     """Pushes the CSV file to our MinIO bucket."""
     try:
-        print(f"📤 Uploading {file_name} to MinIO bucket '{bucket_name}'...")
+        logging.info(f"Uploading {file_name} to MinIO bucket '{bucket_name}'...")
         s3_client.upload_file(filepath, bucket_name, file_name)
-        print("✅ Upload complete!")
+        logging.info("Upload complete!")
     except ClientError as e:
-        print(f"❌ Upload failed: {e}")
+        logging.error(f"Upload failed: {e}")
         raise
 
 def main():
-    print("=" * 50)
-    print("🚀 Starting Data Generation Simulator")
-    print("=" * 50)
+    logging.info("Starting Data Generation Simulator")
     
     try:
         s3_client = get_s3_client()
@@ -155,9 +158,10 @@ def main():
         
         # 4: Upload the local file to MinIO
         upload_to_minio(s3_client, BUCKET_NAME, filepath, filename)
+        logging.info("Successfully finished generation and upload.")
         
     except Exception as e:
-        print(f"🚨 An unexpected error occurred: {e}")
+        logging.error(f"An unexpected error occurred: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()
