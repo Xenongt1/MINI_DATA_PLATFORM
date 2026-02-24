@@ -76,7 +76,15 @@ docker compose up -d
     ```
 2.  **Trigger DAG**: Go to Airflow (localhost:8081), unpause `sales_data_pipeline`, and trigger it.
 
-## Repository Structure
+## 📊 Screenshots
+
+Here are some snapshots of the platform in action:
+
+| Airflow Pipeline Success | Metabase Dashboard |
+|-------------------------|--------------------|
+| ![Airflow](screenshots/airflow_dag_success.png) | ![Metabase](screenshots/metabase_charts.png) |
+
+## 📁 Repository Structure
 ```text
 .
 ├── airflow/            # Airflow DAGs and Logs
