@@ -1,8 +1,8 @@
-# Mini Data Platform (MDP) 🚀
+# Mini Data Platform (MDP) 
 
 A robust, enterprise-ready "Mini" Data Platform built entirely on Docker Compose. This platform demonstrates the full data lifecycle: Collection, Processing, Storage, and Visualization.
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 graph LR
@@ -32,7 +32,7 @@ graph LR
     MB -- Queries --> P
 ```
 
-## 🌟 Key Features
+## Key Features
 
 - **Automated ETL**: Apache Airflow DAG handles scanning, schema validation, multi-stage cleaning (duplicates, bad types, anomalies), and idempotent loading.
 - **MinIO Object Storage**: S3-compatible local storage for raw CSV ingestion.
@@ -43,7 +43,7 @@ graph LR
 - **Dashboarding**: Metabase comes pre-configured to query the `sales` table.
 - **CI/CD**: GitHub Actions pipeline for building images and validating data flow.
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Prerequisites
 - [Docker & Docker Compose](https://docs.docker.com/get-docker/)
@@ -76,7 +76,7 @@ docker compose up -d
     ```
 2.  **Trigger DAG**: Go to Airflow (localhost:8081), unpause `sales_data_pipeline`, and trigger it.
 
-## 📁 Repository Structure
+## Repository Structure
 ```text
 .
 ├── airflow/            # Airflow DAGs and Logs
@@ -87,12 +87,12 @@ docker compose up -d
 └── docker-compose.yml  # Orchestration file
 ```
 
-## 🛠️ Team Contributions
+## Team Contributions
 - **Team Member**: Mubarak Tijani
 - **Role**: Full Stack Data Engineer
 - **Tasks**: Architecture Design, Airflow DAG Development, Docker Orchestration, Slack Integration.
 
-## ✅ Assessment Checklist
+## Assessment Checklist
 - [x] **Does it run?**: Yes, fully containerized.
 - [x] **Data flow validation?**: Yes, verified MinIO -> Airflow -> Postgres.
 - [x] **Dashboards?**: Yes, Metabase connected to SQL warehouse.
