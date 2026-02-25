@@ -304,7 +304,7 @@ with DAG(
     'sales_data_pipeline',
     default_args=default_args,
     description='ETL pipeline taking sales CSVs from MinIO, cleaning them, and loading to PostgreSQL',
-    schedule_interval='@daily', 
+    schedule='@daily', 
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=['sales', 'etl', 'minio', 'postgres'],
@@ -313,29 +313,25 @@ with DAG(
     # Task 1
     t1_scan_minio = PythonOperator(
         task_id='scan_minio',
-        python_callable=scan_minio_for_new_files,
-        provide_context=True
+        python_callable=scan_minio_for_new_files
     )
 
     # Task 2
     t2_download_and_validate = PythonOperator(
         task_id='download_and_validate',
-        python_callable=download_and_validate,
-        provide_context=True
+        python_callable=download_and_validate
     )
 
     # Task 3
     t3_clean_data = PythonOperator(
         task_id='clean_data',
-        python_callable=clean_data,
-        provide_context=True
+        python_callable=clean_data
     )
 
     # Task 4
     t4_load_postgres = PythonOperator(
         task_id='load_to_postgres',
-        python_callable=load_to_postgres,
-        provide_context=True
+        python_callable=load_to_postgres
     )
 
     # Define execution order

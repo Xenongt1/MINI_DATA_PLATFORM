@@ -21,7 +21,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install boto3 psycopg2-binary
+        pip install boto3 psycopg2-binary pytest pytest-mock pandas aiohttp apache-airflow-providers-postgres apache-airflow-providers-slack
 
     - name: Build Docker Airflow Image
       run: docker build -t mini_data_platform-airflow:latest .
@@ -30,6 +30,12 @@ jobs:
       run: |
         # Simple syntax check for all python files
         python -m py_compile scripts/*.py airflow/dags/*.py
+
+    - name: Run Unit Tests
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+      run: |
+        pytest tests/ -v
 
     - name: Start Services (Dry Run / Config Check)
       run: |
