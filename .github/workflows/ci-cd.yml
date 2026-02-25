@@ -33,4 +33,5 @@ jobs:
 
     - name: Start Services (Dry Run / Config Check)
       run: |
+        touch .env
         docker compose config
