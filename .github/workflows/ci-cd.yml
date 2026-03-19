@@ -38,6 +38,9 @@ jobs:
         pytest tests/ -v
 
     - name: Start Services (Dry Run / Config Check)
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       run: |
-        touch .env
+        # Inject secure environment variables from GitHub Secrets
+        echo "SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL" >> .env
         docker compose config
