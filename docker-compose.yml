@@ -53,6 +53,9 @@ services:
   metabase:
     image: metabase/metabase:v0.48.6
     container_name: mdp_metabase
+    environment:
+      # Aggressively restrict Metabase JVM RAM so it doesn't crash the free GitHub Runner
+      JAVA_OPTS: "-Xmx512m -Xms512m"
     ports:
       - "3000:3000"
     depends_on:
@@ -67,14 +70,15 @@ services:
     command:
       - -c
       - |
-        airflow db init
+        # Use DB migrate instead of deprecated init to prevent deadlocks
+        airflow db migrate
         airflow users create \
           --username admin \
           --firstname Admin \
           --lastname User \
           --role Admin \
           --email admin@example.com \
-          --password admin
+          --password admin || true
     restart: on-failure
 
   airflow-webserver:
