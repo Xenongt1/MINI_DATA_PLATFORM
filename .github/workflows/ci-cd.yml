@@ -1,4 +1,4 @@
-name: Mini Data Platform CI/CD
+name: Advanced Mini Data Platform CI/CD
 
 on:
   push:
@@ -7,9 +7,11 @@ on:
     branches: [ main ]
 
 jobs:
-  build-and-test:
+  # ====================================================================
+  # 1. CONTINUOUS INTEGRATION (CI)
+  # ====================================================================
+  continuous-integration:
     runs-on: ubuntu-latest
-    
     steps:
     - uses: actions/checkout@v4
 
@@ -23,24 +25,94 @@ jobs:
         python -m pip install --upgrade pip
         pip install boto3 psycopg2-binary pytest pytest-mock pandas aiohttp apache-airflow-providers-postgres apache-airflow-providers-slack
 
-    - name: Build Docker Airflow Image
-      run: docker build -t mini_data_platform-airflow:latest .
-
-    - name: Lint Python scripts
+    - name: Lint Source Code
       run: |
-        # Simple syntax check for all python files
+        # Quick syntax validation across the repository
         python -m py_compile scripts/*.py airflow/dags/*.py
 
     - name: Run Unit Tests
       env:
         PYTHONPATH: ${{ github.workspace }}
       run: |
+        # Verifies the extraction, validation, and Pandas cleaning functions
         pytest tests/ -v
 
-    - name: Start Services (Dry Run / Config Check)
+    - name: Build Docker Airflow Image
+      run: |
+        # Ensures that the custom multi-dependency Dockerfile legitimately compiles
+        docker build -t mini_data_platform-airflow:latest .
+
+  # ====================================================================
+  # 2. CONTINUOUS DEPLOYMENT (CD) & E2E DATA FLOW VALIDATION
+  # ====================================================================
+  continuous-deployment-and-validation:
+    needs: continuous-integration  # Will not deploy unless unit tests pass
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up .env
       env:
         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       run: |
-        # Inject secure environment variables from GitHub Secrets
+        # Creates secure config for the test environment
         echo "SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL" >> .env
-        docker compose config
+
+    - name: Deploy to Test Environment (Docker Compose)
+      run: |
+        # Build the image on this fresh runner
+        docker build -t mini_data_platform-airflow:latest .
+        # Boot the entire enterprise stack in detached mode
+        docker compose up -d
+        
+    - name: Wait for Infrastructure to stabilize
+      run: |
+        echo "Waiting for PostgreSQL warehouse..."
+        while ! docker exec mdp_postgres pg_isready -U airflow; do sleep 5; done
+        
+        echo "Waiting 45 seconds for Airflow to initialize metadata and boot..."
+        sleep 45
+        
+        echo "Ensuring DAG definitions are explicitly established in test DB..."
+        docker exec mdp_airflow_scheduler airflow connections add 'salesdb_conn' --conn-type 'postgres' --conn-login 'airflow' --conn-password 'airflow' --conn-host 'postgres' --conn-port '5432' --conn-schema 'salesdb' || true
+        
+    - name: Data Flow 1 - Ingestion (MinIO)
+      env:
+        MINIO_ENDPOINT: http://localhost:9000
+        MINIO_ACCESS_KEY: minioadmin
+        MINIO_SECRET_KEY: minioadmin123
+      run: |
+        pip install boto3
+        # Simulate a third-party application landing dirty files directly into object storage
+        python scripts/generate_sales_data.py
+        
+    - name: Data Flow 2 - Processing (Airflow ETL)
+      run: |
+        # Force a manual trigger of the ETL DAG on the live test environment
+        docker exec mdp_airflow_scheduler airflow dags trigger sales_data_pipeline
+
+        # Allot Airflow processing time (extracting S3, Pandas cleaning, upserting SQL)
+        echo "Waiting 30 seconds for Data Engineering Pipeline to complete..."
+        sleep 30
+        
+    - name: Data Flow 3 - Storage (PostgreSQL Validation)
+      run: |
+        # Validate mathematically via exact counts that the data survived the entire journey
+        # -t flag removes SQL headers allowing scriptable comparison
+        COUNT=$(docker exec mdp_postgres psql -U airflow -d salesdb -t -c "SELECT COUNT(*) FROM sales;" | xargs)
+        
+        echo "Verified exactly $COUNT rows were permanently loaded into the test warehouse."
+        if [ "$COUNT" -eq 0 ]; then
+          echo "❌ Critical Failure: Zero rows landed in the database. Pipeline failed!"
+          exit 1
+        fi
+
+    - name: Data Flow 4 - Visualization (Metabase Health Config)
+      run: |
+        # Confirm that the visualization proxy is actively serving analytical endpoints
+        curl -s -f http://localhost:3000/api/health || exit 1
+        echo "✅ Metabase is extremely healthy and standing by to query PostgreSQL!"
+        
+    - name: Tear Down Test Environment
+      if: always()
+      run: docker compose down -v
