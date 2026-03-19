@@ -1,21 +1,21 @@
-# Mini Data Platform (MDP) 
+# ConnectSphere - Mini Data Platform (MDP)
 
-A robust, enterprise-ready "Mini" Data Platform built entirely on Docker Compose. This platform demonstrates the full data lifecycle: Collection, Processing, Storage, and Visualization.
+A robust, enterprise-ready "Mini" Data Platform built entirely on Docker Compose. This platform demonstrates a realistic, decoupled data lifecycle: Generation (Simulating a source system), Collection (Object Storage), Processing (ETL Orchestration), Storage (Data Warehouse), and Visualization.
 
-## Architecture
+## Architecture & Data Flow
 
 ```mermaid
 graph LR
-    subgraph "External/Simulator"
-        G[Data Generator]
+    subgraph "Data Generation (Source)"
+        G[Data Generation DAG]
     end
 
-    subgraph "Ingestion & Storage"
-        M[(MinIO - S3 storage)]
+    subgraph "Landing Zone"
+        M[(MinIO - S3 bucket)]
     end
 
-    subgraph "Processing & Orchestration"
-        A[Apache Airflow]
+    subgraph "Data Engineering (ETL)"
+        A[Sales Data Pipeline DAG]
     end
 
     subgraph "Data Warehouse"
@@ -26,82 +26,76 @@ graph LR
         MB[Metabase]
     end
 
-    G -- CSV Upload --> M
-    A -- Scans/Downloads --> M
-    A -- Cleans & Loads --> P
-    MB -- Queries --> P
+    G -- 1. Generates & Uploads CSV --> M
+    A -- 2. Scans/Extracts --> M
+    A -- 3. Cleans, Types & Deduplicates --> A
+    A -- 4. Idempotent Upsert --> P
+    MB -- 5. Analytical Queries --> P
+    
+    %% Automatic Trigger relation
+    G -. Triggers .-> A
 ```
 
-## Key Features
+## Key Architectural Decisions
 
-- **Automated ETL**: Apache Airflow DAG handles scanning, schema validation, multi-stage cleaning (duplicates, bad types, anomalies), and idempotent loading.
-- **MinIO Object Storage**: S3-compatible local storage for raw CSV ingestion.
-- **Robustness**: 
-    - **Retries**: 3x Exponential backoff on all tasks.
-    - **Notifications**: Slack failure alerts (integrated via `.env` webhook).
-    - **XCom Metrics**: Built-in monitoring showing row counts (clean vs dropped) directly in the Airflow UI.
-- **Dashboarding**: Metabase comes pre-configured to query the `sales` table.
-- **CI/CD**: GitHub Actions pipeline for building images and validating data flow.
+- **Decoupled Architecture**: Data generation and data processing are managed by two completely distinct Airflow DAGs (`data_generation_dag` and `sales_data_pipeline`). The generator simulates an external application producing data daily, and it automatically triggers the downstream ETL pipeline when done.
+- **In-Memory Generation**: The generator (`data_generation_dag.py`) builds the fake sales CSVs entirely in-memory using `io.StringIO` and streams them securely into the MinIO bucket, acting as a true stateless microservice.
+- **Idempotent ETL**: The main pipeline utilizes `ON CONFLICT (transaction_id) DO NOTHING` during insertion. You can safely trigger the pipeline 100 times against the identical MinIO bucket, and exactly zero duplicate rows will be created in your Postgres data warehouse.
+- **Data Quality Logic**: Real data is dirty. The generator intentionally injects localized anomalies (missing names, strings inside numeric columns like "5 units", or negative totals) into ~10% of the rows. The ETL pipeline strictly validates the schema `download_and_validate`, rigorously cleanses bad rows using `pandas`, and coerces strict data types (`clean_data`) before it touches PostgreSQL.
+- **Observability**: Built-in Slack alerting on failure handles active monitoring, while Airflow XComs natively track "Total rows", "Dropped Rows", and "Successfully Inserted rows" for every single file parsed.
 
 ## Quick Start
 
 ### 1. Prerequisites
-- [Docker & Docker Compose](https://docs.docker.com/get-docker/)
-- [Python 3.10+](https://www.python.org/downloads/)
+- Docker & Docker Compose
+- Python 3.10+ (for local testing/development)
 
 ### 2. Setup Environment
-Clone the repo and create your `.env` (optional for Slack):
+Clone the repo and configure your environment (Optional: add a Slack Webhook):
 ```bash
-cp .env.example .env # If provided, or just create a new one
+cp .env.example .env 
 ```
 
 ### 3. Spin up the Platform
 ```bash
 docker compose up -d
 ```
-*Wait ~1 minute for Airflow initialization.*
+*Wait ~60 seconds for Airflow to boot and Postgres to initialize the `salesdb`.*
 
 ### 4. Access the Services
-| Service | URL | Credentials (Default) |
+| Service | URL | Default Credentials |
 |---------|-----|-------------|
 | **Airflow** | [localhost:8081](http://localhost:8081) | `admin` / `admin` |
 | **Metabase** | [localhost:3000](http://localhost:3000) | Setup on first visit |
 | **MinIO** | [localhost:9001](http://localhost:9001) | `minioadmin` / `minioadmin123` |
 
-### 5. Run the Data Pipeline
-1.  **Generate Data**:
-    ```bash
-    pip install boto3
-    python scripts/generate_sales_data.py
-    ```
-2.  **Trigger DAG**: Go to Airflow (localhost:8081), unpause `sales_data_pipeline`, and trigger it.
-
-## Screenshots
-
-Here are some snapshots of the platform in action:
-
-| Airflow Pipeline Success | Metabase Dashboard |
-|-------------------------|--------------------|
-| ![Airflow](screenshots/airflow_dag_success.png) | ![Metabase](screenshots/metabase_charts.png) |
+### 5. Running the Complete Lifecycle
+1. Navigate to **Airflow** (`http://localhost:8081`).
+2. Log in and **unpause** both DAGs (`data_generation_dag` and `sales_data_pipeline`).
+3. Click **Trigger DAG** on `data_generation_dag`.
+4. Watch it generate data, upload to MinIO, and seamlessly **trigger** the `sales_data_pipeline` right behind it.
+5. In your terminal, verify the records landed safely in the warehouse:
+   ```bash
+   docker exec mdp_postgres psql -U airflow -d salesdb -c "SELECT COUNT(*) FROM sales;"
+   ```
 
 ## Repository Structure
 ```text
 .
-├── airflow/            # Airflow DAGs and Logs
-├── data/               # Local cache for raw and clean data
-├── scripts/            # Simulation and Validation scripts
-├── .github/workflows/  # CI/CD pipeline
-├── Dockerfile          # Custom Airflow image with Slack support
-└── docker-compose.yml  # Orchestration file
+├── airflow/
+│   └── dags/
+│       ├── data_generation_dag.py   # Simulates external app producing data
+│       └── sales_data_pipeline.py   # Core Data Engineering ETL pipeline
+├── tests/                           # Pytest unit tests mocking Airflow and S3
+├── .github/ workflows/ci-cd.yml     # Automated Tests and Docker Build checks
+├── Dockerfile                       # Custom Airflow image (Pandas, Boto3, Postgres, Slack)
+└── docker-compose.yml               # Complete infrastructure definitions
 ```
 
-## Team Contributions
-- **Team Member**: Mubarak Tijani
-- **Role**: Full Stack Data Engineer
-- **Tasks**: Architecture Design, Airflow DAG Development, Docker Orchestration, Slack Integration.
-
-## Assessment Checklist
-- [x] **Does it run?**: Yes, fully containerized.
-- [x] **Data flow validation?**: Yes, verified MinIO -> Airflow -> Postgres.
-- [x] **Dashboards?**: Yes, Metabase connected to SQL warehouse.
-- [x] **CI/CD?**: GitHub Actions implemented.
+## Testing & CI/CD
+This repository enforces high code-quality standards via rigorous automated testing.
+Run unit tests locally to verify DAG logics:
+```bash
+PYTHONPATH=. pytest tests/ -v
+```
+All code pushed to `main` executes the `.github/workflows/ci-cd.yml` pipeline ensuring the Python logic, infrastructure syntax, and Docker builds seamlessly complete before deployment.

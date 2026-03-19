@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 import json
 from unittest.mock import MagicMock
-from airflow.dags.sales_data_pipeline import clean_data, download_and_validate
+from airflow.dags.sales_data_pipeline import clean_data, download_and_validate, scan_minio_for_new_files
 
 @pytest.fixture
 def mock_ti():
@@ -107,3 +107,29 @@ def test_download_and_validate_failure(mocker, mock_ti):
     
     # Empty list expected since the file fails validation
     assert len(results) == 0
+
+def test_scan_minio_for_new_files(mocker, mock_ti):
+    """Test scanning MinIO bucket for correctly formatted CSVs."""
+    mock_s3 = MagicMock()
+    mocker.patch('airflow.dags.sales_data_pipeline.get_s3_client', return_value=mock_s3)
+    
+    # Mock the list_objects_v2 response to return a mix of CSV and non-CSV files
+    mock_response = {
+        'Contents': [
+            {'Key': 'sales_data_1.csv'},
+            {'Key': 'sales_data_2.csv'},
+            {'Key': 'ignore_me.txt'},
+            {'Key': 'metadata.json'}
+        ]
+    }
+    mock_s3.list_objects_v2.return_value = mock_response
+    
+    results = scan_minio_for_new_files(ti=mock_ti)
+    
+    # Should only return the .csv files
+    assert len(results) == 2
+    assert 'sales_data_1.csv' in results
+    assert 'sales_data_2.csv' in results
+    
+    # Verify it pushed the correct counts to XCom
+    mock_ti.xcom_push.assert_any_call(key='file_count', value=2)
