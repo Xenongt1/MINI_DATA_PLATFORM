@@ -60,6 +60,10 @@ jobs:
 
     - name: Deploy to Test Environment (Docker Compose)
       run: |
+        # Fix Permission Denied: Pre-create mounted folders with open permissions so the non-root 'airflow' user can write to them
+        mkdir -p airflow/logs airflow/plugins
+        chmod -R 777 airflow/logs airflow/plugins
+
         # Build the image on this fresh runner
         docker build -t mini_data_platform-airflow:latest .
         # Boot the entire enterprise stack in detached mode
